@@ -36,24 +36,36 @@ class CookieAuthXMLRPCTransport(xmlrpclib.SafeTransport):
     """
 
     def __init__(self, cookiefile = None, user_agent = None):
-        self.cookiefile = cookiefile or "cookies.txt"
+        self.cookiefile = cookiefile
+        self.runtime_cookie = cookielib.LWPCookieJar()
         self.user_agent = user_agent or create_user_agent()
         xmlrpclib.SafeTransport.__init__(self)
         
     def send_cookie_auth(self, connection):
         """Include Cookie Authentication data in a header"""
         logging.debug("Sending cookie")
-        cj = cookielib.LWPCookieJar()
-        cj.load(self.cookiefile)
-        for cookie in cj:
-            connection.putheader("Cookie", "%s=%s" % (cookie.name,cookie.value))
+        if self.cookiefile:
+            cj = cookielib.LWPCookieJar()
+            cj.load(self.cookiefile)
+            for cookie in cj:
+                connection.putheader("Cookie", "%s=%s" % (cookie.name,cookie.value))
+        else:
+            # cookie file not set use runtime
+            for cookie in self.runtime_cookie:
+                connection.putheader("Cookie", "%s=%s" % (cookie.name,cookie.value))
+
 
     ## override the send_host hook to also send authentication info
     def send_host(self, connection, host):
         xmlrpclib.Transport.send_host(self, connection, host)
-        if os.path.exists(self.cookiefile):
-            logging.debug(" Sending back cookie header")
+        if self.cookiefile:
+            if os.path.exists(self.cookiefile):
+                logging.debug("Sending back cookie header")
+                self.send_cookie_auth(connection)
+        else:
+            logging.debug("Sending back runtime cookie header")
             self.send_cookie_auth(connection)
+
 
     def request(self, host, handler, request_body, verbose=0):
         # dummy request class for extracting cookies 
@@ -79,7 +91,8 @@ class CookieAuthXMLRPCTransport(xmlrpclib.SafeTransport):
         errcode, errmsg, headers = h.getreply()
         cresponse = CookieResponse(headers)
         cj.extract_cookies(cresponse, crequest)
-        if len(cj) >0 and not os.path.exists(self.cookiefile):
+        self.runtime_cookie.extract_cookies(cresponse, crequest)
+        if len(cj) >0 and self.cookiefile: # and not os.path.exists(self.cookiefile):
             logging.debug("Saving cookies in cookie jar")
             cj.save(self.cookiefile)
         if errcode != 200:
